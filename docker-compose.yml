@@ -1,0 +1,78 @@
+version: '3.8'
+
+services:
+
+  db:
+    restart: always
+    image: postgres:11
+    container_name: postgres_db
+    expose:
+      - ${PG_PORT}
+    ports:
+      - "${PG_PORT}:5432"
+    networks:
+      - backend
+    environment:
+      - POSTGRES_USER=${PG_USER}
+      - POSTGRES_PASSWORD=${PG_PASSWORD}
+      - POSTGRES_DATABASE=${PG_DATABASE}
+    volumes:
+      - db_data:/var/lib/postgresql/data/
+
+  tracking_server:
+    restart: always
+    build: ./mlflow
+    image: gorcenski/mlflow-scratch
+    container_name: mlflow_server
+    depends_on:
+      - db
+    ports:
+      - "${MLFLOW_PORT}:5050"
+    networks:
+      - backend
+    command: >
+      mlflow server 
+      --backend-store-uri postgresql://${PG_USER}:${PG_PASSWORD}@db:5432/${PG_DATABASE}
+      --host 0.0.0.0
+      --port 5050
+      --default-artifact-root file:///opt/artifacts/
+    volumes:
+      - ./artifacts:/opt/artifacts
+
+  jupyter:
+    image: cschranz/gpu-jupyter:v1.5_cuda-11.6_ubuntu-20.04
+    container_name: notebooks
+    restart: always
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    volumes:
+      - "./data:/home/jovyan/data"
+      - "./notebooks:/home/jovyan/notebooks"
+      - "./project:/home/jovyan/project"
+      - "./requirements.txt:/home/jovyan/requirements.txt"
+      - "./.env:/home/jovyan/.env"
+      - ".jupyter:/home/jovyan/.jupyter"
+    ports:
+      - "127.0.0.1:8848:8888"
+    environment:
+      - MLFLOW_S3_ENDPOINT_URL=${MLFLOW_S3_ENDPOINT_URL}
+      - MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI}
+      - NB_UID=${NB_UID:-1000}
+      - GRANT_SUDO=yes
+    user: root
+    networks:
+      - backend
+    depends_on:
+      - tracking_server
+
+volumes:
+  db_data:
+
+networks:
+  backend:
+    driver: bridge
